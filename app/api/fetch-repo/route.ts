@@ -44,17 +44,20 @@ export async function GET(request: NextRequest) {
 
     const files: Record<string, string> = {};
 
+    // --- FIX A: Dynamically determine the correct base URL for the bridge script ---
+    const proto = request.headers.get('x-forwarded-proto') ?? 'http';
+    const host = request.headers.get('host');
+    const base = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${host}`;
+    const bridgeScriptTag = `<script src="${base}/embed/stackblitz-bridge"></script>`;
+
     for (const item of treeData.tree) {
       if (item.type === "blob" && item.path && item.sha) {
-        // We will process package.json separately, so skip it here.
-        if (item.path === 'package.json') continue;
-
         try {
           const { data: blobData } = await octokit.rest.git.getBlob({ owner, repo, file_sha: item.sha });
           let content = Buffer.from(blobData.content, "base64").toString("utf-8");
 
-          if (item.path === 'index.html') {
-            const bridgeScriptTag = `<script src="${process.env.NEXT_PUBLIC_BASE_URL}/embed/stackblitz-bridge"></script>`;
+          // --- FIX B: Inject the bridge into index.html wherever it's located ---
+          if (item.path === 'index.html' || item.path === 'public/index.html') {
             content = content.replace(/<\/head>/i, `${bridgeScriptTag}</head>`);
           }
 
@@ -64,53 +67,21 @@ export async function GET(request: NextRequest) {
         }
       }
     }
+    
+    // --- FIX C: Create a .env file for the game ---
+    // The game's `gameId` is its repository name.
+    files['.env'] = `VITE_GAME_ID=${repo}`;
 
-    // Now, fetch, parse, and modify the package.json
-    try {
-        const { data: packageJsonData } = await octokit.rest.repos.getContent({
-            owner,
-            repo,
-            path: 'package.json',
-        });
+    // --- FIX D (Implicit): We are no longer modifying or creating a custom package.json ---
+    // This trusts the game's own dependencies.
 
-        if ('content' in packageJsonData) {
-            const content = Buffer.from(packageJsonData.content, 'base64').toString('utf-8');
-            const pkg = JSON.parse(content);
-
-            // Ensure devDependencies exists
-            if (!pkg.devDependencies) {
-                pkg.devDependencies = {};
-            }
-
-            // --- SURGICAL MODIFICATIONS ---
-            // 1. Pin Vite to a stable version
-            pkg.devDependencies['vite'] = '^5.2.0';
-            
-            // 2. Ensure a compatible React plugin for Vite 5
-            pkg.devDependencies['@vitejs/plugin-react'] = '^4.2.0';
-
-            // 3. Remove potentially problematic ESLint packages
-            for (const key in pkg.devDependencies) {
-                if (key.includes('eslint')) {
-                    delete pkg.devDependencies[key];
-                }
-            }
-             for (const key in pkg.dependencies) {
-                if (key.includes('eslint')) {
-                    delete pkg.dependencies[key];
-                }
-            }
-
-            // Overwrite the original package.json with our modified version
-            files['package.json'] = JSON.stringify(pkg, null, 2);
-        }
-    } catch (e) {
-        return NextResponse.json({ error: "Could not find or process package.json in the repository." }, { status: 400 });
+    if (!files["index.html"] && !files["public/index.html"]) {
+      return NextResponse.json({ error: "Could not find index.html in the repository." }, { status: 400 });
     }
     
-
-    if (!files["index.html"]) {
-        return NextResponse.json({ error: "Could not find index.html in the repository root." }, { status: 400 });
+    // If only public/index.html exists, mirror it to the root for Vite's dev server.
+    if (!files['index.html'] && files['public/index.html']) {
+        files['index.html'] = files['public/index.html'];
     }
 
     return NextResponse.json({ files });
