@@ -46,8 +46,8 @@ async function getSandboxModels() {
 
 // --- API Route Handlers ---
 
-export async function POST(request: NextRequest, { params }: { params: { proxy: string[] } }) {
-  const path = params.proxy.join('/');
+export async function POST(request: NextRequest, context: { params: { proxy: string[] } }) {
+  const path = context.params.proxy.join('/');
 
   try {
     const models = await getSandboxModels();
@@ -91,8 +91,8 @@ export async function POST(request: NextRequest, { params }: { params: { proxy: 
   }
 }
 
-export async function GET(request: NextRequest, { params }: { params: { proxy: string[] } }) {
-    const path = params.proxy.join('/');
+export async function GET(request: NextRequest, context: { params: { proxy: string[] } }) {
+    const path = context.params.proxy.join('/');
 
     if (path === 'get-data') {
         try {
