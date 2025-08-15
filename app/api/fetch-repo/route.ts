@@ -146,27 +146,41 @@ const getSessionId = async () => {
           packageJson.dependencies["esbuild-wasm"] = "latest";
         }
 
-        // 2) ***Force Rollup to WASM*** via an npm alias.
-        // This ensures any `require('rollup')` (e.g., from Vite) resolves to the WASM build.
-        // Using devDependencies is fine since Rollup is a build-time tool.
-        if (packageJson.devDependencies["rollup"] !== "npm:@rollup/wasm-node@^4") {
-          packageJson.devDependencies["rollup"] = "npm:@rollup/wasm-node@^4";
-        }
-        if (!packageJson.devDependencies["@rollup/wasm-node"]) {
-          packageJson.devDependencies["@rollup/wasm-node"] = "^4";
-        }
+        // 2) Remove any existing rollup references from both dependencies and devDependencies
+        delete packageJson.dependencies["rollup"];
+        delete packageJson.devDependencies["rollup"];
+        
+        // 3) Force Rollup to WASM via npm alias in both dependencies and devDependencies
+        // This ensures any require('rollup') resolves to the WASM build
+        packageJson.dependencies["rollup"] = "npm:@rollup/wasm-node@^4";
+        packageJson.devDependencies["rollup"] = "npm:@rollup/wasm-node@^4";
+        
+        // Also add the actual WASM package
+        packageJson.dependencies["@rollup/wasm-node"] = "^4";
+        packageJson.devDependencies["@rollup/wasm-node"] = "^4";
 
-        // 3) Keep overrides as a belt-and-suspenders fallback
+        // 4) Force overrides for all package managers
         packageJson.overrides = {
           ...(packageJson.overrides || {}),
-          rollup: "@rollup/wasm-node@^4",
+          rollup: "npm:@rollup/wasm-node@^4",
+          "@rollup/wasm-node": "^4",
         };
+        
+        // For pnpm
         packageJson.pnpm = {
           ...(packageJson.pnpm || {}),
           overrides: {
             ...(packageJson.pnpm?.overrides || {}),
-            rollup: "@rollup/wasm-node@^4",
+            rollup: "npm:@rollup/wasm-node@^4",
+            "@rollup/wasm-node": "^4",
           },
+        };
+        
+        // For yarn
+        packageJson.resolutions = {
+          ...(packageJson.resolutions || {}),
+          "rollup": "npm:@rollup/wasm-node@^4",
+          "@rollup/wasm-node": "^4",
         };
 
         files["/package.json"] = {
