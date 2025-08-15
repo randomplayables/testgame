@@ -59,7 +59,6 @@ export async function GET(request: NextRequest) {
             content = content.replace(/<\/head>/i, `${bridgeScriptTag}</head>`);
           }
 
-          // **FIX 1 of 3: Ensure API calls are correctly routed**
           if (item.path === "src/services/apiService.ts") {
             content = content.replace(
               /const\s+API_BASE_URL\s*=\s*["'`].*?["'`]\s*;/,
@@ -67,7 +66,6 @@ export async function GET(request: NextRequest) {
             );
           }
           
-          // **FIX 2 of 3: Guarantee a working dev script in package.json**
           if (item.path === "package.json") {
             try {
               const pkg = JSON.parse(content);
@@ -88,13 +86,25 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // **FIX 3 of 3 (Part 1): Create .env file with API endpoint hint**
     files['.env'] = `VITE_GAME_ID=${repo}\nVITE_API_BASE_URL=/api/sandbox`;
 
-    // **FIX 3 of 3 (Part 2): Inject a no-op ESLint config if none exists**
-    if (!files["eslint.config.js"] && !files["eslint.config.mjs"]) {
-        files["eslint.config.js"] = `export default [];`;
+    // --- NEW FIX: Reliably silence the ESLint/TypeScript worker crash ---
+    const tsconfigPath = "tsconfig.json";
+    let tsconfig = files[tsconfigPath] ? JSON.parse(files[tsconfigPath]) : { compilerOptions: {} };
+    tsconfig.exclude = Array.isArray(tsconfig.exclude) ? tsconfig.exclude : [];
+    const patternsToExclude = ["eslint.config.js", "eslint.config.mjs"];
+    for (const pattern of patternsToExclude) {
+        if (!tsconfig.exclude.includes(pattern)) {
+            tsconfig.exclude.push(pattern);
+        }
     }
+    files[tsconfigPath] = JSON.stringify(tsconfig, null, 2);
+
+    // Also inject a no-op ESLint config if none exists to prevent a "not found" error.
+    if (!files["eslint.config.js"] && !files["eslint.config.mjs"]) {
+        files["eslint.config.js"] = `export default []; // Injected by RandomPlayables Test Platform`;
+    }
+    // --------------------------------------------------------------------
 
     if (!files["index.html"] && !files["public/index.html"]) {
       return NextResponse.json({ error: "Could not find index.html in the repository." }, { status: 400 });

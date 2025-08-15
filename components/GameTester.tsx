@@ -77,7 +77,9 @@ export default function GameTester({ files }: { files: Record<string, string> })
       files: files as ProjectFiles,
     }, {
       height: '100%',
-      openFile: "src/App.tsx",
+      // --- FIX: Point to the correct entry file for the web server ---
+      openFile: "index.html", 
+      // -----------------------------------------------------------------
       clickToLoad: false,
       showSidebar: false,
       startScript: "npm run dev",
