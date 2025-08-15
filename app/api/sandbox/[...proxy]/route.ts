@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 
+export const runtime = 'nodejs'; // Pin to the Node.js runtime for Mongoose
+
 // --- Database Connection (copied from main project) ---
 let sandboxConnection: mongoose.Connection | null = null;
 async function connectToSandboxDB(): Promise<mongoose.Connection> {
@@ -46,8 +48,12 @@ async function getSandboxModels() {
 
 // --- API Route Handlers ---
 
-export async function POST(request: NextRequest, context: { params: { proxy: string[] } }) {
-  const path = context.params.proxy.join('/');
+export async function POST(
+  request: Request,
+  { params }: { params: Promise<{ proxy: string[] }> }
+) {
+  const { proxy } = await params;
+  const path = proxy.join('/');
 
   try {
     const models = await getSandboxModels();
