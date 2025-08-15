@@ -46,17 +46,13 @@ export async function GET(request: NextRequest) {
 
     for (const item of treeData.tree) {
       if (item.type === "blob" && item.path && item.sha) {
-        // --- ADDED THIS CHECK ---
-        if (item.path === 'eslint.config.js') {
-          continue; // Skip the ESLint config file
-        }
-        // ------------------------
-        
+        // We will process package.json separately, so skip it here.
+        if (item.path === 'package.json') continue;
+
         try {
           const { data: blobData } = await octokit.rest.git.getBlob({ owner, repo, file_sha: item.sha });
           let content = Buffer.from(blobData.content, "base64").toString("utf-8");
 
-          // Inject our bridge script into the main HTML file
           if (item.path === 'index.html') {
             const bridgeScriptTag = `<script src="${process.env.NEXT_PUBLIC_BASE_URL}/embed/stackblitz-bridge"></script>`;
             content = content.replace(/<\/head>/i, `${bridgeScriptTag}</head>`);
@@ -68,6 +64,50 @@ export async function GET(request: NextRequest) {
         }
       }
     }
+
+    // Now, fetch, parse, and modify the package.json
+    try {
+        const { data: packageJsonData } = await octokit.rest.repos.getContent({
+            owner,
+            repo,
+            path: 'package.json',
+        });
+
+        if ('content' in packageJsonData) {
+            const content = Buffer.from(packageJsonData.content, 'base64').toString('utf-8');
+            const pkg = JSON.parse(content);
+
+            // Ensure devDependencies exists
+            if (!pkg.devDependencies) {
+                pkg.devDependencies = {};
+            }
+
+            // --- SURGICAL MODIFICATIONS ---
+            // 1. Pin Vite to a stable version
+            pkg.devDependencies['vite'] = '^5.2.0';
+            
+            // 2. Ensure a compatible React plugin for Vite 5
+            pkg.devDependencies['@vitejs/plugin-react'] = '^4.2.0';
+
+            // 3. Remove potentially problematic ESLint packages
+            for (const key in pkg.devDependencies) {
+                if (key.includes('eslint')) {
+                    delete pkg.devDependencies[key];
+                }
+            }
+             for (const key in pkg.dependencies) {
+                if (key.includes('eslint')) {
+                    delete pkg.dependencies[key];
+                }
+            }
+
+            // Overwrite the original package.json with our modified version
+            files['package.json'] = JSON.stringify(pkg, null, 2);
+        }
+    } catch (e) {
+        return NextResponse.json({ error: "Could not find or process package.json in the repository." }, { status: 400 });
+    }
+    
 
     if (!files["index.html"]) {
         return NextResponse.json({ error: "Could not find index.html in the repository root." }, { status: 400 });
