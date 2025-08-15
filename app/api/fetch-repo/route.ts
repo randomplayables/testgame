@@ -121,7 +121,6 @@
 
 
 
-
 import { NextRequest, NextResponse } from "next/server";
 import { Octokit } from "octokit";
 
@@ -234,30 +233,55 @@ const getSessionId = async () => {
             }
         }
 
-        // After fetching all files, parse package.json and inject the dependency
+        // After fetching all files, parse package.json and inject sandbox-friendly tooling
         if (packageJsonContent) {
             try {
                 const packageJson = JSON.parse(packageJsonContent);
-                if (!packageJson.dependencies) {
-                    packageJson.dependencies = {};
+
+                // Ensure objects exist
+                packageJson.dependencies = packageJson.dependencies || {};
+                packageJson.devDependencies = packageJson.devDependencies || {};
+
+                // 1) Keep your original esbuild WASM injection (helps Vite dev transform in Nodebox)
+                //    (This mirrors your previous approach.)
+                if (!packageJson.dependencies['esbuild-wasm']) {
+                    packageJson.dependencies['esbuild-wasm'] = 'latest';
                 }
-                // Add the missing esbuild-wasm dependency
-                packageJson.dependencies['esbuild-wasm'] = 'latest';
-                
-                // Update the files object with the modified package.json
+
+                // 2) *** NEW *** Force Rollup to use the WASM build inside Nodebox
+                //    - Add @rollup/wasm-node as a dev dependency
+                //    - Add overrides so anything that depends on "rollup" resolves to the WASM build
+                if (!packageJson.devDependencies['@rollup/wasm-node']) {
+                    packageJson.devDependencies['@rollup/wasm-node'] = '^4';
+                }
+
+                // npm-style overrides (some sandboxes may use npm semantics)
+                packageJson.overrides = {
+                    ...(packageJson.overrides || {}),
+                    'rollup': '@rollup/wasm-node@^4'
+                };
+
+                // pnpm-style overrides (Nodebox shows a pnpm store path)
+                packageJson.pnpm = {
+                    ...(packageJson.pnpm || {}),
+                    overrides: {
+                        ...(packageJson.pnpm?.overrides || {}),
+                        'rollup': '@rollup/wasm-node@^4'
+                    }
+                };
+
                 files['/package.json'] = { code: JSON.stringify(packageJson, null, 2) };
             } catch (e) {
                 console.error("Could not parse or modify package.json", e);
-                // If parsing fails, we'll proceed with the original, but it will likely fail in the sandbox
+                // Continue with original if parsing fails
             }
         }
-
 
         return NextResponse.json({ files });
 
     } catch (error: unknown) {
         console.error("GitHub API Error:", error);
-        if (typeof error === 'object' && error !== null && 'status' in error && error.status === 404) {
+        if (typeof error === 'object' && error !== null && 'status' in error && (error as any).status === 404) {
              return NextResponse.json({ error: 'Repository not found. Please check the URL and ensure it is a public repository.' }, { status: 404 });
         }
         const message = error instanceof Error ? error.message : 'An unknown error occurred.';
