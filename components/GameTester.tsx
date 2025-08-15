@@ -1,10 +1,14 @@
 "use client";
 
-import { SandpackProvider, SandpackLayout, SandpackPreview } from "@codesandbox/sandpack-react";
-import { SandpackFiles } from '@codesandbox/sandpack-react';
-import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Spinner } from './spinner';
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  SandpackProvider,
+  SandpackLayout,
+  SandpackPreview,
+  SandpackFiles,
+} from "@codesandbox/sandpack-react";
+import { Spinner } from "./spinner";
 
 interface GameTesterProps {
   files: SandpackFiles;
@@ -14,7 +18,7 @@ async function fetchSandboxData(sessionId: string | null) {
   if (!sessionId) return [];
   const response = await fetch(`/api/sandbox/get-data?sessionId=${sessionId}`);
   if (!response.ok) {
-    throw new Error('Failed to fetch sandbox data');
+    throw new Error("Failed to fetch sandbox data");
   }
   const data = await response.json();
   return data.gameData || [];
@@ -22,100 +26,69 @@ async function fetchSandboxData(sessionId: string | null) {
 
 export default function GameTester({ files }: GameTesterProps) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [isReady, setIsReady] = useState(false);
 
-  const { data: sandboxData, isLoading: isLoadingData } = useQuery({
-    queryKey: ['sandboxData', activeSessionId],
-    queryFn: () => fetchSandboxData(activeSessionId),
-    enabled: !!activeSessionId,
-    refetchInterval: 2000, // Poll for new data every 2 seconds
-  });
-
+  // Listen for session id posted by injected helper in apiService.ts
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      // It's good practice to check the origin for security
-      // if (event.origin !== "https://sandpack-your-origin.com") return;
-
-      if (event.data?.type === 'SANDBOX_SESSION_ID') {
-        const receivedSessionId = event.data.payload;
-        if (receivedSessionId && activeSessionId !== receivedSessionId) {
-          console.log(`Received new session ID from sandbox: ${receivedSessionId}`);
-          setActiveSessionId(receivedSessionId);
-        }
+    const handler = (event: MessageEvent) => {
+      if (event?.data?.type === "SANDBOX_SESSION_ID" && event.data.payload) {
+        setActiveSessionId(String(event.data.payload));
       }
     };
-
-    window.addEventListener('message', handleMessage);
-    return () => {
-      window.removeEventListener('message', handleMessage);
-    };
-  }, [activeSessionId]);
-
-  // A simple effect to give Sandpack time to initialize before showing content
-  useEffect(() => {
-    const timer = setTimeout(() => setIsReady(true), 500);
-    return () => clearTimeout(timer);
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
   }, []);
 
+  const { data: sandboxData, isLoading: isLoadingData } = useQuery({
+    queryKey: ["sandboxData", activeSessionId],
+    queryFn: () => fetchSandboxData(activeSessionId),
+    enabled: !!activeSessionId,
+    refetchInterval: 2000,
+  });
+
+  // Keep files stable across renders
+  const spFiles = useMemo(() => files, [files]);
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-      <div className="bg-white p-4 rounded-lg shadow-md border h-[70vh] flex flex-col">
-        <h2 className="text-xl font-semibold mb-4 text-gray-700">Game Preview</h2>
-        <div className="flex-grow w-full h-full border rounded-md overflow-hidden bg-gray-100 relative">
-          {isReady ? (
-            <SandpackProvider
-              template="react-ts"
-              files={files}
-              options={{
-                externalResources: ["https://cdn.tailwindcss.com"],
-                bundlerURL: "https://sandpack-bundler.codesandbox.io",
-              }}
-              customSetup={{
-                dependencies: {
-                  "react": "^18.2.0",
-                  "react-dom": "^18.2.0",
-                  "mathjs": "^13.0.3",
-                  "clsx": "^2.1.1"
-                },
-                devDependencies: {
-                  "@types/react": "^18.2.0",
-                  "@types/react-dom": "^18.2.0",
-                  "typescript": "^5.0.0"
-                }
-              }}
-              theme="light"
-            >
-              <SandpackLayout>
-                <SandpackPreview
-                  showNavigator={true}
-                  showOpenInCodeSandbox={false}
-                  showRefreshButton={true}
-                  style={{ height: '100%', width: '100%' }}
-                />
-              </SandpackLayout>
-            </SandpackProvider>
-          ) : (
-            <div className="flex items-center justify-center h-full">
-              <Spinner />
-              <span className="ml-2">Initializing Sandbox...</span>
-            </div>
-          )}
-        </div>
+    <div className="space-y-6">
+      <div className="rounded-lg border bg-white">
+        <SandpackProvider
+          template="react-ts"
+          files={spFiles}
+          options={{
+            externalResources: [],
+            recompileMode: "delayed",
+            recompileDelay: 300,
+          }}
+        >
+          <SandpackLayout>
+            <SandpackPreview showRefreshButton />
+          </SandpackLayout>
+        </SandpackProvider>
       </div>
-      <div className="bg-white p-4 rounded-lg shadow-md border h-[70vh] flex flex-col">
-        <h2 className="text-xl font-semibold mb-4 text-gray-700">Sandbox Data Log</h2>
-        <p className="text-xs text-gray-500 mb-2">
-          Session ID: {activeSessionId || 'Waiting for game to start...'}
-        </p>
-        <div className="flex-grow bg-gray-900 text-white font-mono text-xs p-4 rounded-md overflow-y-auto">
-          {isLoadingData && <p>Loading data...</p>}
-          {!activeSessionId && <p className="text-gray-400">Play the game to see data appear here.</p>}
-          {sandboxData && sandboxData.length > 0 ? (
-            <pre>{JSON.stringify(sandboxData, null, 2)}</pre>
-          ) : (
-            !isLoadingData && activeSessionId && <p className="text-gray-400">No data recorded for this session yet.</p>
-          )}
-        </div>
+
+      <div className="rounded-lg border bg-white p-4">
+        <h3 className="text-lg font-semibold mb-2">Session Data</h3>
+        {!activeSessionId && (
+          <p className="text-sm text-gray-600">
+            Waiting for session to start…
+          </p>
+        )}
+        {activeSessionId && (
+          <p className="text-sm text-gray-600 mb-3">
+            Session: <span className="font-mono">{activeSessionId}</span>
+          </p>
+        )}
+        {activeSessionId && isLoadingData && (
+          <div className="flex items-center gap-2 text-gray-600">
+            <Spinner className="w-4 h-4" />
+            <span>Loading sandbox data…</span>
+          </div>
+        )}
+        {activeSessionId && !isLoadingData && (
+          <pre className="text-xs bg-gray-50 p-3 rounded overflow-auto max-h-72">
+            {JSON.stringify(sandboxData, null, 2)}
+          </pre>
+        )}
       </div>
     </div>
   );

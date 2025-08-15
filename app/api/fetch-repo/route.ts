@@ -72,16 +72,18 @@ export async function GET(request: NextRequest) {
     for (const item of treeData.tree) {
       if (item.type === "blob" && item.path) {
         try {
-          // Skip vite-specific config files since we're using react-ts template
-          if (item.path === "vite.config.ts" || 
-              item.path === "vite.config.js" || 
-              item.path === "vite.config.mjs" ||
-              item.path === "vite-env.d.ts" ||
-              item.path === "tsconfig.node.json" ||
-              item.path === "package.json" ||
-              item.path === "package-lock.json" ||
-              item.path === "yarn.lock" ||
-              item.path === "pnpm-lock.yaml") {
+          // Skip vite-specific/lock files since we’ll run as a Sandpack react-ts template
+          if (
+            item.path === "vite.config.ts" ||
+            item.path === "vite.config.js" ||
+            item.path === "vite.config.mjs" ||
+            item.path === "vite-env.d.ts" ||
+            item.path === "tsconfig.node.json" ||
+            item.path === "package.json" ||
+            item.path === "package-lock.json" ||
+            item.path === "yarn.lock" ||
+            item.path === "pnpm-lock.yaml"
+          ) {
             continue;
           }
 
@@ -91,11 +93,9 @@ export async function GET(request: NextRequest) {
             file_sha: item.sha!,
           });
 
-          let content = Buffer.from(blobData.content, "base64").toString(
-            "utf-8"
-          );
+          let content = Buffer.from(blobData.content, "base64").toString("utf-8");
 
-          // Modify apiService.ts to point to our sandbox API + session bridge
+          // Re-point apiService.ts to our local sandbox API and inject a simple session bridge
           if (item.path === "src/services/apiService.ts") {
             content = content.replace(
               /const API_BASE_URL = .*;/g,
@@ -107,7 +107,7 @@ const getSessionId = async () => {
     const response = await fetch(API_BASE_URL + '/game-session', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gameId: 'test-game' }) // Using a generic test gameId
+      body: JSON.stringify({ gameId: 'test-game' })
     });
     const data = await response.json();
     if (data.sessionId) {
@@ -122,7 +122,7 @@ const getSessionId = async () => {
 // --- End Injection ---
 `
             );
-            // Preserve your original logging; only rename the symbol and wire our helper
+            // Preserve original logging/signature; wire our helper to exported name
             content = content.replace(
               "export async function initGameSession()",
               "export async function initGameSession_Original()"
@@ -133,9 +133,8 @@ const getSessionId = async () => {
             );
           }
 
-          // Modify main.tsx or index.tsx to work with react-ts template
+          // Make Vite mains compatible with react-ts template shape
           if (item.path === "src/main.tsx" || item.path === "src/main.ts") {
-            // Replace Vite-specific imports with standard React
             content = content.replace(
               /import React from 'react'/g,
               "import * as React from 'react'"
@@ -150,20 +149,23 @@ const getSessionId = async () => {
             );
           }
 
-          // For TypeScript files, ensure proper imports
-          if (item.path.endsWith('.ts') || item.path.endsWith('.tsx')) {
-            // Ensure React is imported for JSX files
-            if (item.path.endsWith('.tsx') && !content.includes('import React') && !content.includes('import * as React')) {
-              content = `import * as React from 'react';\n${content}`;
-            }
+          // Ensure React import for TSX files as needed
+          if (
+            (item.path.endsWith(".ts") || item.path.endsWith(".tsx")) &&
+            item.path.endsWith(".tsx") &&
+            !content.includes("import React") &&
+            !content.includes("import * as React")
+          ) {
+            content = `import * as React from 'react';\n${content}`;
           }
 
-          // Convert vite env references to standard process.env
-          if (content.includes('import.meta.env')) {
-            content = content.replace(/import\.meta\.env\.DEV/g, "process.env.NODE_ENV === 'development'");
-            content = content.replace(/import\.meta\.env\.PROD/g, "process.env.NODE_ENV === 'production'");
-            content = content.replace(/import\.meta\.env\.MODE/g, "process.env.NODE_ENV");
-            content = content.replace(/import\.meta\.env\.VITE_/g, "process.env.REACT_APP_");
+          // Convert import.meta.env references
+          if (content.includes("import.meta.env")) {
+            content = content
+              .replace(/import\.meta\.env\.DEV/g, "process.env.NODE_ENV === 'development'")
+              .replace(/import\.meta\.env\.PROD/g, "process.env.NODE_ENV === 'production'")
+              .replace(/import\.meta\.env\.MODE/g, "process.env.NODE_ENV")
+              .replace(/import\.meta\.env\.VITE_/g, "process.env.REACT_APP_");
           }
 
           // Sandpack expects absolute-style paths
@@ -174,7 +176,7 @@ const getSessionId = async () => {
       }
     }
 
-    // Create a simple index.tsx if main.tsx doesn't exist (for react-ts template)
+    // Provide a minimal React entry if needed, rename main → index for template
     if (!files["/src/index.tsx"] && !files["/src/main.tsx"]) {
       files["/src/index.tsx"] = {
         code: `import * as React from 'react';
@@ -189,55 +191,61 @@ root.render(
   <React.StrictMode>
     <App />
   </React.StrictMode>
-);`
+);`,
       };
     } else if (files["/src/main.tsx"]) {
-      // Rename main.tsx to index.tsx for react-ts template
       files["/src/index.tsx"] = files["/src/main.tsx"];
       delete files["/src/main.tsx"];
     }
 
-    // Update imports that reference main.tsx
-    Object.keys(files).forEach(filePath => {
-      if (files[filePath].code.includes('./main') || files[filePath].code.includes('/main')) {
+    // Update imports referencing ./main → ./index
+    Object.keys(files).forEach((filePath) => {
+      if (
+        files[filePath].code.includes("./main") ||
+        files[filePath].code.includes("/main")
+      ) {
         files[filePath].code = files[filePath].code
           .replace(/from ['"]\.\/main['"]/g, 'from "./index"')
           .replace(/from ['"]\/src\/main['"]/g, 'from "/src/index"');
       }
     });
 
-    // Create a basic tsconfig.json for react-ts template
+    // Basic tsconfig for the react-ts template
     files["/tsconfig.json"] = {
-      code: JSON.stringify({
-        "compilerOptions": {
-          "target": "ES2020",
-          "useDefineForClassFields": true,
-          "lib": ["ES2020", "DOM", "DOM.Iterable"],
-          "module": "ESNext",
-          "skipLibCheck": true,
-          "moduleResolution": "node",
-          "resolveJsonModule": true,
-          "isolatedModules": true,
-          "noEmit": true,
-          "jsx": "react-jsx",
-          "strict": true,
-          "noUnusedLocals": true,
-          "noUnusedParameters": true,
-          "noFallthroughCasesInSwitch": true,
-          "esModuleInterop": true,
-          "allowSyntheticDefaultImports": true,
-          "forceConsistentCasingInFileNames": true,
-          "baseUrl": ".",
-          "paths": {
-            "@/*": ["./src/*"]
-          }
+      code: JSON.stringify(
+        {
+          compilerOptions: {
+            target: "ES2020",
+            useDefineForClassFields: true,
+            lib: ["ES2020", "DOM", "DOM.Iterable"],
+            module: "ESNext",
+            skipLibCheck: true,
+            moduleResolution: "node",
+            resolveJsonModule: true,
+            isolatedModules: true,
+            noEmit: true,
+            jsx: "react-jsx",
+            strict: true,
+            noUnusedLocals: true,
+            noUnusedParameters: true,
+            noFallthroughCasesInSwitch: true,
+            esModuleInterop: true,
+            allowSyntheticDefaultImports: true,
+            forceConsistentCasingInFileNames: true,
+            baseUrl: ".",
+            paths: {
+              "@/*": ["./src/*"],
+            },
+          },
+          include: ["src"],
+          exclude: ["node_modules"],
         },
-        "include": ["src"],
-        "exclude": ["node_modules"]
-      }, null, 2)
+        null,
+        2
+      ),
     };
 
-    // Ensure we have an HTML entry point
+    // Minimal HTML entry for the template
     if (!files["/public/index.html"] && !files["/index.html"]) {
       files["/public/index.html"] = {
         code: `<!DOCTYPE html>
@@ -250,7 +258,7 @@ root.render(
   <body>
     <div id="root"></div>
   </body>
-</html>`
+</html>`,
       };
     }
 
@@ -266,8 +274,7 @@ root.render(
         { status: 404 }
       );
     }
-    const message =
-      error instanceof Error ? error.message : "An unknown error occurred.";
+    const message = error instanceof Error ? error.message : "An unknown error occurred.";
     return NextResponse.json(
       { error: "Failed to fetch repository from GitHub.", details: message },
       { status: 500 }
