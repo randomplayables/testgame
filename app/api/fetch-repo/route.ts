@@ -8,7 +8,7 @@ function extractRepoPath(url: string): string | null {
     const pathParts = parsedUrl.pathname.split("/").filter(Boolean);
     if (pathParts.length >= 2) return `${pathParts[0]}/${pathParts[1]}`;
     return null;
-  } catch (_error) { // Changed to avoid unused variable warning
+  } catch (_error) {
     return null;
   }
 }
@@ -88,9 +88,20 @@ export async function GET(request: NextRequest) {
     
     files['.env'] = `VITE_GAME_ID=${repo}\nVITE_API_BASE_URL=/api/sandbox`;
 
+    // --- FIX: Reliably silence the ESLint/TypeScript worker crash ---
     const tsconfigPath = "tsconfig.json";
-    // --- FIX: Changed 'let' to 'const' ---
-    const tsconfig = files[tsconfigPath] ? JSON.parse(files[tsconfigPath]) : { compilerOptions: {} };
+    let tsconfig: any = {};
+    if (files[tsconfigPath]) {
+        try {
+            tsconfig = JSON.parse(files[tsconfigPath]);
+        } catch (e) {
+            console.warn("Could not parse existing tsconfig.json, creating a new one.");
+            tsconfig = { compilerOptions: {} };
+        }
+    } else {
+        tsconfig = { compilerOptions: {} };
+    }
+    
     tsconfig.exclude = Array.isArray(tsconfig.exclude) ? tsconfig.exclude : [];
     const patternsToExclude = ["eslint.config.js", "eslint.config.mjs"];
     for (const pattern of patternsToExclude) {
@@ -100,9 +111,11 @@ export async function GET(request: NextRequest) {
     }
     files[tsconfigPath] = JSON.stringify(tsconfig, null, 2);
 
+    // Also inject a no-op ESLint config if none exists to prevent a "not found" error.
     if (!files["eslint.config.js"] && !files["eslint.config.mjs"]) {
-        files["eslint.config.js"] = `export default [];`;
+        files["eslint.config.js"] = `export default []; // Injected by RandomPlayables Test Platform`;
     }
+    // --------------------------------------------------------------------
 
     if (!files["index.html"] && !files["public/index.html"]) {
       return NextResponse.json({ error: "Could not find index.html in the repository." }, { status: 400 });

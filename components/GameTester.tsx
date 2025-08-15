@@ -78,7 +78,7 @@ export default function GameTester({ files }: { files: Record<string, string> })
     }, {
       height: '100%',
       // --- FIX: Point to the correct entry file for the web server ---
-      openFile: "index.html", 
+      openFile: "index.html",
       // -----------------------------------------------------------------
       clickToLoad: false,
       showSidebar: false,
