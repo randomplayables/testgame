@@ -124,6 +124,20 @@ const getSessionId = async () => {
               "export const initGameSession = getSessionId; export async function initGameSession_Renamed"
             );
           }
+          
+          // Modify any existing vite.config files to exclude rollup
+          if (item.path === "vite.config.ts" || item.path === "vite.config.js" || item.path === "vite.config.mjs") {
+            // Add optimizeDeps exclusion if not present
+            if (!content.includes('optimizeDeps')) {
+              content = content.replace(
+                'export default defineConfig(',
+                `export default defineConfig({
+  optimizeDeps: {
+    exclude: ['rollup']
+  },`
+              );
+            }
+          }
 
           // Sandpack expects absolute-style paths
           files[`/${item.path}`] = { code: content };
@@ -146,41 +160,53 @@ const getSessionId = async () => {
           packageJson.dependencies["esbuild-wasm"] = "latest";
         }
 
-        // 2) Remove any existing rollup references from both dependencies and devDependencies
+        // 2) Remove any existing rollup and vite references
         delete packageJson.dependencies["rollup"];
         delete packageJson.devDependencies["rollup"];
+        delete packageJson.dependencies["vite"];
+        delete packageJson.devDependencies["vite"];
         
-        // 3) Force Rollup to WASM via npm alias in both dependencies and devDependencies
-        // This ensures any require('rollup') resolves to the WASM build
-        packageJson.dependencies["rollup"] = "npm:@rollup/wasm-node@^4";
-        packageJson.devDependencies["rollup"] = "npm:@rollup/wasm-node@^4";
+        // 3) Add @rollup/wasm-node directly as the main rollup package
+        packageJson.dependencies["@rollup/wasm-node"] = "^4.28.1";
+        // Add rollup as an alias to the WASM version
+        packageJson.dependencies["rollup"] = "npm:@rollup/wasm-node@^4.28.1";
         
-        // Also add the actual WASM package
-        packageJson.dependencies["@rollup/wasm-node"] = "^4";
-        packageJson.devDependencies["@rollup/wasm-node"] = "^4";
-
-        // 4) Force overrides for all package managers
+        // 4) Re-add vite with a specific version that's compatible
+        packageJson.devDependencies["vite"] = "^5.4.11";
+        
+        // 5) Force all package managers to use WASM rollup via aliases and overrides
+        // NPM overrides
         packageJson.overrides = {
           ...(packageJson.overrides || {}),
-          rollup: "npm:@rollup/wasm-node@^4",
-          "@rollup/wasm-node": "^4",
+          "rollup": "npm:@rollup/wasm-node@^4.28.1",
+          "@rollup/rollup-linux-x32": "npm:@rollup/wasm-node@^4.28.1",
+          "@rollup/rollup-linux-x64-gnu": "npm:@rollup/wasm-node@^4.28.1",
+          "@rollup/rollup-linux-x64-musl": "npm:@rollup/wasm-node@^4.28.1",
+          "vite": {
+            "rollup": "npm:@rollup/wasm-node@^4.28.1"
+          }
         };
         
-        // For pnpm
+        // PNPM overrides
         packageJson.pnpm = {
           ...(packageJson.pnpm || {}),
           overrides: {
             ...(packageJson.pnpm?.overrides || {}),
-            rollup: "npm:@rollup/wasm-node@^4",
-            "@rollup/wasm-node": "^4",
-          },
+            "rollup": "npm:@rollup/wasm-node@^4.28.1",
+            "@rollup/rollup-linux-x32": "npm:@rollup/wasm-node@^4.28.1",
+            "@rollup/rollup-linux-x64-gnu": "npm:@rollup/wasm-node@^4.28.1",
+            "@rollup/rollup-linux-x64-musl": "npm:@rollup/wasm-node@^4.28.1"
+          }
         };
         
-        // For yarn
+        // Yarn resolutions
         packageJson.resolutions = {
           ...(packageJson.resolutions || {}),
-          "rollup": "npm:@rollup/wasm-node@^4",
-          "@rollup/wasm-node": "^4",
+          "rollup": "npm:@rollup/wasm-node@^4.28.1",
+          "**/rollup": "npm:@rollup/wasm-node@^4.28.1",
+          "@rollup/rollup-linux-x32": "npm:@rollup/wasm-node@^4.28.1",
+          "@rollup/rollup-linux-x64-gnu": "npm:@rollup/wasm-node@^4.28.1",
+          "@rollup/rollup-linux-x64-musl": "npm:@rollup/wasm-node@^4.28.1"
         };
 
         files["/package.json"] = {
@@ -191,6 +217,61 @@ const getSessionId = async () => {
         // Continue with original package.json if parsing fails
       }
     }
+    
+    // Create a custom vite config that forces WASM rollup usage
+    if (!files["/vite.config.ts"] && !files["/vite.config.js"]) {
+      files["/vite.config.ts"] = {
+        code: `import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+// https://vitejs.dev/config/
+export default defineConfig({
+  plugins: [react()],
+  build: {
+    rollupOptions: {
+      // Use the WASM version of rollup
+    }
+  },
+  optimizeDeps: {
+    exclude: ['rollup']
+  }
+})`
+      };
+    }
+    
+    // Create a rollup shim that redirects to WASM version
+    files["/node_modules/rollup/package.json"] = {
+      code: JSON.stringify({
+        "name": "rollup",
+        "version": "4.28.1",
+        "main": "dist/rollup.js",
+        "module": "dist/rollup.js",
+        "browser": "dist/rollup.browser.js",
+        "exports": {
+          ".": {
+            "import": "./dist/rollup.js",
+            "require": "./dist/rollup.js"
+          }
+        }
+      }, null, 2)
+    };
+    
+    files["/node_modules/rollup/dist/rollup.js"] = {
+      code: `// Rollup shim for Sandpack - redirects to WASM version
+module.exports = require('@rollup/wasm-node');`
+    };
+    
+    files["/node_modules/rollup/dist/rollup.browser.js"] = {
+      code: `// Rollup browser shim for Sandpack - redirects to WASM version
+export * from '@rollup/wasm-node';
+export { default } from '@rollup/wasm-node';`
+    };
+    
+    // Also override the native.js file that's causing the error
+    files["/node_modules/rollup/dist/native.js"] = {
+      code: `// Native shim for Sandpack - redirects to WASM version
+module.exports = require('@rollup/wasm-node');`
+    };
 
     return NextResponse.json({ files });
   } catch (error: unknown) {
