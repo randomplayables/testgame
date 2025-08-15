@@ -1,5 +1,3 @@
-import { NextResponse } from "next/server";
-
 // This route serves the client-side script that will be injected into the sandboxed game.
 export async function GET() {
   const js = `
