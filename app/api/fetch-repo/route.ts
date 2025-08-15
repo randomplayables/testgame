@@ -109,11 +109,12 @@ const getSessionId = async () => {
 
         return NextResponse.json({ files });
 
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error("GitHub API Error:", error);
-        if (error.status === 404) {
+        if (typeof error === 'object' && error !== null && 'status' in error && error.status === 404) {
              return NextResponse.json({ error: 'Repository not found. Please check the URL and ensure it is a public repository.' }, { status: 404 });
         }
-        return NextResponse.json({ error: 'Failed to fetch repository from GitHub.', details: error.message }, { status: 500 });
+        const message = error instanceof Error ? error.message : 'An unknown error occurred.';
+        return NextResponse.json({ error: 'Failed to fetch repository from GitHub.', details: message }, { status: 500 });
     }
 }

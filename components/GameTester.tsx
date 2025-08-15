@@ -2,7 +2,7 @@
 
 import { SandpackProvider, SandpackLayout, SandpackPreview } from "@codesandbox/sandpack-react";
 import { SandpackFiles } from '@codesandbox/sandpack-react';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Spinner } from './spinner';
 
@@ -23,7 +23,6 @@ async function fetchSandboxData(sessionId: string | null) {
 export default function GameTester({ files }: GameTesterProps) {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isReady, setIsReady] = useState(false);
-  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const { data: sandboxData, isLoading: isLoadingData } = useQuery({
     queryKey: ['sandboxData', activeSessionId],
