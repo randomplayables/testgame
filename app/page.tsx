@@ -3,11 +3,10 @@
 import { useState } from 'react';
 import GameTester from '@/components/GameTester';
 import { Spinner } from '@/components/spinner';
-import { SandpackFiles } from '@codesandbox/sandpack-react';
 
 export default function GameTestingPage() {
-  const [githubUrl, setGithubUrl] = useState('');
-  const [files, setFiles] = useState<SandpackFiles | null>(null);
+  const [githubUrl, setGithubUrl] = useState('https://github.com/randomplayables/rectify');
+  const [files, setFiles] = useState<Record<string, string> | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [key, setKey] = useState(0); // Used to force re-mount of GameTester
