@@ -46,6 +46,12 @@ export async function GET(request: NextRequest) {
 
     for (const item of treeData.tree) {
       if (item.type === "blob" && item.path && item.sha) {
+        // --- ADDED THIS CHECK ---
+        if (item.path === 'eslint.config.js') {
+          continue; // Skip the ESLint config file
+        }
+        // ------------------------
+        
         try {
           const { data: blobData } = await octokit.rest.git.getBlob({ owner, repo, file_sha: item.sha });
           let content = Buffer.from(blobData.content, "base64").toString("utf-8");
