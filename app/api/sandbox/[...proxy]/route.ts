@@ -90,28 +90,3 @@ export async function POST(request: NextRequest, context: { params: { proxy: str
     return NextResponse.json({ error: "Sandbox API operation failed", details: message }, { status: 500 });
   }
 }
-
-export async function GET(request: NextRequest, context: { params: { proxy: string[] } }) {
-    const path = context.params.proxy.join('/');
-
-    if (path === 'get-data') {
-        try {
-            const models = await getSandboxModels();
-            const { searchParams } = new URL(request.url);
-            const sessionId = searchParams.get("sessionId");
-
-            if (!sessionId) {
-                return NextResponse.json({ error: "Missing sessionId" }, { status: 400 });
-            }
-
-            const gameData = await models.GameData.find({ sessionId }).sort({ timestamp: 1 }).lean();
-            return NextResponse.json({ success: true, gameData });
-        } catch (error: unknown) {
-            console.error("Error in /api/sandbox/get-data:", error);
-            const message = error instanceof Error ? error.message : 'An unknown error occurred.';
-            return NextResponse.json({ error: "Sandbox GET operation failed", details: message }, { status: 500 });
-        }
-    }
-    
-    return NextResponse.json({ error: 'Not Found' }, { status: 404 });
-}
