@@ -1,5 +1,3 @@
-// (keeping your historical commented block intact if present in your repo)
-
 import { NextRequest, NextResponse } from "next/server";
 import { Octokit } from "octokit";
 
@@ -135,7 +133,7 @@ const getSessionId = async () => {
       }
     }
 
-    // Inject sandbox-friendly tooling into package.json (WASM rollup + esbuild-wasm)
+    // Inject sandbox-friendly tooling into package.json
     if (packageJsonContent) {
       try {
         const packageJson = JSON.parse(packageJsonContent);
@@ -143,23 +141,26 @@ const getSessionId = async () => {
         packageJson.dependencies = packageJson.dependencies || {};
         packageJson.devDependencies = packageJson.devDependencies || {};
 
-        // Keep esbuild-wasm for transforms in Nodebox
+        // 1) Keep esbuild-wasm for transforms in Nodebox
         if (!packageJson.dependencies["esbuild-wasm"]) {
           packageJson.dependencies["esbuild-wasm"] = "latest";
         }
 
-        // Force Rollup to WASM to avoid native binary errors in Nodebox
+        // 2) ***Force Rollup to WASM*** via an npm alias.
+        // This ensures any `require('rollup')` (e.g., from Vite) resolves to the WASM build.
+        // Using devDependencies is fine since Rollup is a build-time tool.
+        if (packageJson.devDependencies["rollup"] !== "npm:@rollup/wasm-node@^4") {
+          packageJson.devDependencies["rollup"] = "npm:@rollup/wasm-node@^4";
+        }
         if (!packageJson.devDependencies["@rollup/wasm-node"]) {
           packageJson.devDependencies["@rollup/wasm-node"] = "^4";
         }
 
-        // npm-style overrides
+        // 3) Keep overrides as a belt-and-suspenders fallback
         packageJson.overrides = {
           ...(packageJson.overrides || {}),
           rollup: "@rollup/wasm-node@^4",
         };
-
-        // pnpm-style overrides (Nodebox uses a pnpm store path)
         packageJson.pnpm = {
           ...(packageJson.pnpm || {}),
           overrides: {
@@ -189,7 +190,8 @@ const getSessionId = async () => {
         { status: 404 }
       );
     }
-    const message = error instanceof Error ? error.message : "An unknown error occurred.";
+    const message =
+      error instanceof Error ? error.message : "An unknown error occurred.";
     return NextResponse.json(
       { error: "Failed to fetch repository from GitHub.", details: message },
       { status: 500 }
