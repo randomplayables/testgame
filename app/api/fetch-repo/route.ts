@@ -44,7 +44,6 @@ export async function GET(request: NextRequest) {
 
     const files: Record<string, string> = {};
 
-    // --- FIX A: Dynamically determine the correct base URL for the bridge script ---
     const proto = request.headers.get('x-forwarded-proto') ?? 'http';
     const host = request.headers.get('host');
     const base = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${host}`;
@@ -56,9 +55,30 @@ export async function GET(request: NextRequest) {
           const { data: blobData } = await octokit.rest.git.getBlob({ owner, repo, file_sha: item.sha });
           let content = Buffer.from(blobData.content, "base64").toString("utf-8");
 
-          // --- FIX B: Inject the bridge into index.html wherever it's located ---
           if (item.path === 'index.html' || item.path === 'public/index.html') {
             content = content.replace(/<\/head>/i, `${bridgeScriptTag}</head>`);
+          }
+
+          // **FIX 1 of 3: Ensure API calls are correctly routed**
+          if (item.path === "src/services/apiService.ts") {
+            content = content.replace(
+              /const\s+API_BASE_URL\s*=\s*["'`].*?["'`]\s*;/,
+              `const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/sandbox';`
+            );
+          }
+          
+          // **FIX 2 of 3: Guarantee a working dev script in package.json**
+          if (item.path === "package.json") {
+            try {
+              const pkg = JSON.parse(content);
+              pkg.scripts = pkg.scripts || {};
+              if (!pkg.scripts.dev) {
+                pkg.scripts.dev = "vite";
+              }
+              content = JSON.stringify(pkg, null, 2);
+            } catch (e) {
+              console.error("Failed to parse or modify package.json, leaving as-is.", e);
+            }
           }
 
           files[item.path] = content;
@@ -68,18 +88,18 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // --- FIX C: Create a .env file for the game ---
-    // The game's `gameId` is its repository name.
-    files['.env'] = `VITE_GAME_ID=${repo}`;
+    // **FIX 3 of 3 (Part 1): Create .env file with API endpoint hint**
+    files['.env'] = `VITE_GAME_ID=${repo}\nVITE_API_BASE_URL=/api/sandbox`;
 
-    // --- FIX D (Implicit): We are no longer modifying or creating a custom package.json ---
-    // This trusts the game's own dependencies.
+    // **FIX 3 of 3 (Part 2): Inject a no-op ESLint config if none exists**
+    if (!files["eslint.config.js"] && !files["eslint.config.mjs"]) {
+        files["eslint.config.js"] = `export default [];`;
+    }
 
     if (!files["index.html"] && !files["public/index.html"]) {
       return NextResponse.json({ error: "Could not find index.html in the repository." }, { status: 400 });
     }
     
-    // If only public/index.html exists, mirror it to the root for Vite's dev server.
     if (!files['index.html'] && files['public/index.html']) {
         files['index.html'] = files['public/index.html'];
     }
