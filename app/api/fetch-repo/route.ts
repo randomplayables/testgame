@@ -135,7 +135,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Octokit } from "octokit";
 
-// Define a type for the tsconfig object to satisfy the linter
 interface TsConfig {
   compilerOptions: Record<string, unknown>;
   exclude?: string[];
@@ -143,11 +142,10 @@ interface TsConfig {
 
 function extractRepoPath(url: string): string | null {
   try {
-    const parsedUrl = new URL(url);
-    if (parsedUrl.hostname !== "github.com") return null;
-    const pathParts = parsedUrl.pathname.split("/").filter(Boolean);
-    if (pathParts.length >= 2) return `${pathParts[0]}/${pathParts[1]}`;
-    return null;
+    const u = new URL(url);
+    if (u.hostname !== "github.com") return null;
+    const parts = u.pathname.split("/").filter(Boolean);
+    return parts.length >= 2 ? `${parts[0]}/${parts[1]}` : null;
   } catch {
     return null;
   }
@@ -160,100 +158,89 @@ function hasStatusCode(e: unknown): e is { status: number } {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const repoUrl = searchParams.get("url");
-
-  if (!repoUrl) {
-    return NextResponse.json({ error: "GitHub URL is required." }, { status: 400 });
-  }
+  if (!repoUrl) return NextResponse.json({ error: "GitHub URL is required." }, { status: 400 });
 
   const repoPath = extractRepoPath(repoUrl);
-  if (!repoPath) {
-    return NextResponse.json({ error: "Invalid GitHub repository URL format." }, { status: 400 });
-  }
+  if (!repoPath) return NextResponse.json({ error: "Invalid GitHub repository URL format." }, { status: 400 });
 
   const [owner, repo] = repoPath.split("/");
   const octokit = new Octokit({ auth: process.env.GITHUB_PAT });
 
   try {
-    const { data: defaultBranchData } = await octokit.rest.repos.get({ owner, repo });
-    const { data: treeData } = await octokit.rest.git.getTree({
+    const { data: repoData } = await octokit.rest.repos.get({ owner, repo });
+    const { data: tree } = await octokit.rest.git.getTree({
       owner,
       repo,
-      tree_sha: defaultBranchData.default_branch,
+      tree_sha: repoData.default_branch,
       recursive: "1",
     });
 
     const files: Record<string, string> = {};
 
-    const proto = request.headers.get('x-forwarded-proto') ?? 'http';
-    const host = request.headers.get('host');
+    const proto = request.headers.get("x-forwarded-proto") ?? "http";
+    const host = request.headers.get("host");
     const base = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${host}`;
-    const bridgeScriptTag = `<script src="${base}/embed/stackblitz-bridge"></script>`;
+    const bridgeTag = `<script src="${base}/embed/stackblitz-bridge"></script>`;
 
-    for (const item of treeData.tree) {
-      if (item.type === "blob" && item.path && item.sha) {
-        try {
-          const { data: blobData } = await octokit.rest.git.getBlob({ owner, repo, file_sha: item.sha });
-          let content = Buffer.from(blobData.content, "base64").toString("utf-8");
+    for (const item of tree.tree) {
+      if (item.type !== "blob" || !item.path || !item.sha) continue;
 
-          // Inject the bridge <script> tag
-          if (item.path === 'index.html' || item.path === 'public/index.html') {
-            content = content.replace(/<\/head>/i, `${bridgeScriptTag}</head>`);
-          }
+      try {
+        const { data: blob } = await octokit.rest.git.getBlob({ owner, repo, file_sha: item.sha });
+        let content = Buffer.from(blob.content, "base64").toString("utf-8");
 
-          // Normalize ANY API_BASE_URL assignment to our sandbox path
-          if (item.path === "src/services/apiService.ts") {
-            // Replace the entire assignment up to the semicolon (covers string, ternary, etc.)
-            content = content.replace(
-              /const\s+API_BASE_URL\s*=\s*[^;]+;/,
-              `const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/sandbox';`
-            );
-          }
-
-          // Ensure there is a "dev" script so StackBlitz knows how to start
-          if (item.path === "package.json") {
-            try {
-              const pkg = JSON.parse(content);
-              pkg.scripts = pkg.scripts || {};
-              if (!pkg.scripts.dev) {
-                pkg.scripts.dev = "vite";
-              }
-              content = JSON.stringify(pkg, null, 2);
-            } catch {
-              console.error("Failed to parse or modify package.json, leaving as-is.");
-            }
-          }
-
-          files[item.path] = content;
-        } catch (blobError) {
-          console.error(`Skipping file ${item.path} due to error:`, blobError);
+        // Inject our bridge in the preview page
+        if (item.path === "index.html" || item.path === "public/index.html") {
+          content = content.replace(/<\/head>/i, `${bridgeTag}</head>`);
         }
+
+        // Normalize ANY style of API_BASE_URL assignment (string, ternary, etc.)
+        if (item.path === "src/services/apiService.ts") {
+          content = content.replace(
+            /const\s+API_BASE_URL\s*=\s*[^;]+;/,
+            `const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/sandbox';`
+          );
+        }
+
+        // Ensure a dev script exists for StackBlitz
+        if (item.path === "package.json") {
+          try {
+            const pkg = JSON.parse(content);
+            pkg.scripts = pkg.scripts || {};
+            if (!pkg.scripts.dev) pkg.scripts.dev = "vite";
+            content = JSON.stringify(pkg, null, 2);
+          } catch {
+            // leave as-is
+          }
+        }
+
+        files[item.path] = content;
+      } catch (e) {
+        console.error(`Skipping ${item.path}:`, e);
       }
     }
 
-    // Inject env for the game being tested
-    files['.env'] = `VITE_GAME_ID=${repo}\nVITE_API_BASE_URL=/api/sandbox`;
+    // Env for the sandboxed game
+    files[".env"] = `VITE_GAME_ID=${repo}\nVITE_API_BASE_URL=/api/sandbox\n`;
 
-    // Ensure TS won’t choke on eslint configs
+    // Keep TS from chasing eslint configs
     const tsconfigPath = "tsconfig.json";
     const tsconfig: TsConfig = files[tsconfigPath] ? JSON.parse(files[tsconfigPath]) : { compilerOptions: {} };
     tsconfig.exclude = Array.isArray(tsconfig.exclude) ? tsconfig.exclude : [];
-    const patternsToExclude = ["eslint.config.js", "eslint.config.mjs"];
-    for (const pattern of patternsToExclude) {
-      if (!tsconfig.exclude.includes(pattern)) {
-        tsconfig.exclude.push(pattern);
-      }
+    for (const pat of ["eslint.config.js", "eslint.config.mjs"]) {
+      if (!tsconfig.exclude.includes(pat)) tsconfig.exclude.push(pat);
     }
     files[tsconfigPath] = JSON.stringify(tsconfig, null, 2);
 
-    // Provide a JS eslint config stub so TS/StackBlitz stop looking for a missing file
+    // Provide a tiny eslint config so StackBlitz stops warning
     files["eslint.config.js"] = files["eslint.config.js"] ?? `export default [];`;
 
-    // Ensure index.html exists at project root for StackBlitz preview
+    // Ensure index.html exists at project root for preview
     if (!files["index.html"] && !files["public/index.html"]) {
       return NextResponse.json({ error: "Could not find index.html in the repository." }, { status: 400 });
     }
-    if (!files['index.html'] && files['public/index.html']) {
-      files['index.html'] = files['public/index.html'];
+    if (!files["index.html"] && files["public/index.html"]) {
+      files["index.html"] = files["public/index.html"];
     }
 
     return NextResponse.json({ files });
@@ -262,7 +249,7 @@ export async function GET(request: NextRequest) {
     if (hasStatusCode(error) && error.status === 404) {
       return NextResponse.json({ error: "Repository not found. Please check the URL." }, { status: 404 });
     }
-    const message = error instanceof Error ? error.message : "An unknown error occurred.";
-    return NextResponse.json({ error: "Failed to fetch repository from GitHub.", details: message }, { status: 500 });
+    const msg = error instanceof Error ? error.message : "Unknown error";
+    return NextResponse.json({ error: "Failed to fetch repository from GitHub.", details: msg }, { status: 500 });
   }
 }
