@@ -1,4 +1,3 @@
-// This route serves the client-side script that will be injected into the sandboxed game.
 export async function GET() {
   const js = `
 // RP Bridge for StackBlitz preview -> host
