@@ -210,27 +210,22 @@ export async function GET(request: NextRequest) {
           const { data: blobData } = await octokit.rest.git.getBlob({ owner, repo, file_sha: item.sha });
           let content = Buffer.from(blobData.content, "base64").toString("utf-8");
 
-          // Inject our bridge into the preview page
           if (item.path === 'index.html' || item.path === 'public/index.html') {
             content = content.replace(/<\/head>/i, `${bridgeScriptTag}</head>`);
           }
 
-          // **FIX START**: Correctly modify the API service to use the proxy
           if (item.path === "src/services/apiService.ts") {
-            // Replace any API_BASE_URL assignment with our generic proxy URL
+            // Replace API_BASE_URL assignment with our generic proxy URL
             content = content.replace(
               /const\s+API_BASE_URL\s*=\s*[^;]+;/g,
               `const API_BASE_URL = '/api';`
             );
             
-            // If no API_BASE_URL was found, inject it at the top of the file
             if (!content.includes('const API_BASE_URL')) {
               content = `const API_BASE_URL = '/api';\n` + content;
             }
           }
-          // **FIX END**
           
-          // Ensure a dev script exists for StackBlitz
           if (item.path === "package.json") {
             try {
               const pkg = JSON.parse(content);
@@ -251,10 +246,8 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // Inject env for the game
     files['.env'] = `VITE_GAME_ID=${repo}`;
 
-    // Ensure TS won't choke on eslint configs
     const tsconfigPath = "tsconfig.json";
     const tsconfig: TsConfig = files[tsconfigPath] ? JSON.parse(files[tsconfigPath]) : { compilerOptions: {} };
     tsconfig.exclude = Array.isArray(tsconfig.exclude) ? tsconfig.exclude : [];
@@ -266,11 +259,9 @@ export async function GET(request: NextRequest) {
     }
     files[tsconfigPath] = JSON.stringify(tsconfig, null, 2);
 
-    // **FIX START**: Forcefully overwrite eslint config to prevent StackBlitz error
+    // Forcefully overwrite eslint config to prevent StackBlitz error
     files["eslint.config.js"] = `export default [];`;
-    // **FIX END**
 
-    // Ensure index.html exists at project root for StackBlitz preview
     if (!files["index.html"] && !files["public/index.html"]) {
       return NextResponse.json({ error: "Could not find index.html in the repository." }, { status: 400 });
     }
