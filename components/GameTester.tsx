@@ -545,7 +545,6 @@ export default function GameTester({ files }: { files: Record<string, string> })
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
       if (!isFromSandbox(e.origin)) {
-        // Tiny debug to see filtered messages (requested in your checklist)
         if (typeof e.data?.type === 'string' && e.data.type.startsWith('RP_')) {
           console.debug("[Host] Ignored message from non-sandbox origin:", e.origin, e.data?.type);
         }
@@ -558,10 +557,8 @@ export default function GameTester({ files }: { files: Record<string, string> })
         console.log("Proxying fetch request:", input.url);
         
         try {
-          // Convert relative URL to absolute URL pointing to our server
           let fetchUrl = input.url as string;
           if (fetchUrl.startsWith('/api/')) {
-            // Build the absolute URL for our testgame server
             fetchUrl = window.location.origin + fetchUrl;
           }
           
@@ -569,28 +566,24 @@ export default function GameTester({ files }: { files: Record<string, string> })
           const body = await r.text();
           const headers = Object.fromEntries(r.headers.entries());
           
-          // Send the response back using e.source (the window that sent the message)
-          // This is the KEY FIX - use e.source instead of trying to find the iframe
           if (e.source) {
             (e.source as Window).postMessage(
               { type: 'RP_FETCH_RESULT', id, status: r.status, headers, body },
-              { targetOrigin: e.origin }
+              e.origin // CORRECTED: Pass origin as a string
             );
           } else {
             console.debug("[Host] No e.source on message; cannot post response");
           }
           
-          // After successful response, trigger a data refetch
           if (r.ok && (input.url.includes('game-session') || input.url.includes('game-data'))) {
             setTimeout(() => refetch(), 500);
           }
         } catch (err) {
           console.error("Fetch proxy error:", err);
-          // Also use e.source for error responses
           if (e.source) {
             (e.source as Window).postMessage(
               { type: 'RP_FETCH_RESULT', id, error: String(err) },
-              { targetOrigin: e.origin }
+              e.origin // CORRECTED: Pass origin as a string
             );
           } else {
             console.debug("[Host] No e.source on message; cannot post error back");
