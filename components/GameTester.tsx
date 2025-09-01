@@ -192,6 +192,18 @@ function isFromSandbox(origin: string) {
   }
 }
 
+// --- Types for RP bridge messages and JSON payloads ---
+type JsonRecord = Record<string, unknown>;
+type RPFetchMessage = {
+  type: 'RP_FETCH';
+  id: string;
+  input: {
+    url: string;
+    // Note: messages coming from the iframe may include a JSON object OR a stringified JSON body.
+    init?: (RequestInit & { body?: string | JsonRecord }) | undefined;
+  };
+};
+
 // --- Helpers to derive a readable test-game name from the repo URL ---
 function repoSlugFromUrl(url: string | undefined): string {
   if (!url) return "game";
@@ -222,7 +234,7 @@ export default function GameTester({
   const { data: sandboxData, isLoading: isLoadingData, refetch } = useQuery({
     queryKey: ['sandboxData', sessionId],
     queryFn: () => fetchSandboxData(sessionId),
-    enabled: !!sessionId,                 // do not run until a session exists
+    enabled: !!sessionId,                      // do not run until a session exists
     refetchInterval: sessionId ? 2000 : false, // also gate the interval explicitly
   });
 
@@ -243,28 +255,26 @@ export default function GameTester({
   useEffect(() => {
     const handler = async (e: MessageEvent) => {
       if (!isFromSandbox(e.origin)) {
-        if (typeof e.data?.type === 'string' && e.data.type.startsWith('RP_')) {
-          console.debug("[Host] Ignored message from non-sandbox origin:", e.origin, e.data?.type);
+        if (typeof (e.data as { type?: string })?.type === 'string' && (e.data as { type?: string }).type!.startsWith('RP_')) {
+          console.debug("[Host] Ignored message from non-sandbox origin:", e.origin, (e.data as { type?: string }).type);
         }
         return;
       }
-      const msg = e.data;
-      if (msg?.type === 'RP_FETCH') {
-        const { id, input } = msg as {
-          id: string;
-          input: { url: string; init?: RequestInit & { body?: any } };
-        };
+
+      const raw = e.data as { type?: string };
+      if (raw?.type === 'RP_FETCH') {
+        const { id, input } = (e.data as RPFetchMessage);
         console.log("Proxying fetch request:", input.url);
 
         try {
           // Convert relative URL to absolute URL pointing to our server
-          let fetchUrl: string = input.url as string;
+          let fetchUrl: string = input.url;
           if (fetchUrl.startsWith('/api/')) {
             fetchUrl = window.location.origin + fetchUrl;
           }
 
           // If the embedded game is creating a session, inject a readable gameId/name
-          let initToUse: RequestInit = { ...(input.init || {}) };
+          let initToUse: RequestInit & { body?: string | JsonRecord } = { ...(input.init || {}) };
           const method = (initToUse.method || 'GET').toString().toUpperCase();
           const isSessionCreate =
             method === 'POST' &&
@@ -274,20 +284,22 @@ export default function GameTester({
             const headers = new Headers(initToUse.headers as HeadersInit | undefined);
             if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
-            let payload: any = {};
-            if (initToUse.body) {
+            let payload: JsonRecord = {};
+            const bodyCandidate = initToUse.body;
+            if (typeof bodyCandidate === 'string') {
               try {
-                payload = typeof initToUse.body === 'string' ? JSON.parse(initToUse.body) : initToUse.body;
+                payload = JSON.parse(bodyCandidate) as JsonRecord;
               } catch {
                 payload = {};
               }
+            } else if (bodyCandidate && typeof bodyCandidate === 'object') {
+              payload = bodyCandidate as JsonRecord;
             }
 
             // Only set if not already provided by the game
             const base = repoSlugFromUrl(repoUrl);
-            if (!payload.gameId) payload.gameId = makeTestName(base);
-            if (!payload.gameName) payload.gameName = payload.gameId;
-            // keep userId/createdBy as test values for sandbox sessions
+            if (!('gameId' in payload)) payload.gameId = makeTestName(base);
+            if (!('gameName' in payload)) payload.gameName = payload.gameId;
 
             initToUse = {
               ...initToUse,
@@ -297,13 +309,13 @@ export default function GameTester({
           }
 
           const r = await fetch(fetchUrl, initToUse);
-          const body = await r.text();
-          const headers = Object.fromEntries(r.headers.entries());
+          const bodyText = await r.text();
+          const headersObj = Object.fromEntries(r.headers.entries());
 
           // Send the response back using e.source (the window that sent the message)
           if (e.source) {
             (e.source as Window).postMessage(
-              { type: 'RP_FETCH_RESULT', id, status: r.status, headers, body },
+              { type: 'RP_FETCH_RESULT', id, status: r.status, headers: headersObj, body: bodyText },
               e.origin
             );
           } else {
@@ -318,13 +330,14 @@ export default function GameTester({
           console.error("Fetch proxy error:", err);
           if (e.source) {
             (e.source as Window).postMessage(
-              { type: 'RP_FETCH_RESULT', id, error: String(err) },
+              { type: 'RP_FETCH_RESULT', id: (e.data as RPFetchMessage).id, error: String(err) },
               e.origin
             );
           }
         }
       }
     };
+
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
   }, [repoUrl, refetch]);
