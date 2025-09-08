@@ -239,6 +239,9 @@ export async function GET(request: NextRequest) {
     const base = process.env.NEXT_PUBLIC_BASE_URL || `${proto}://${host}`;
     const bridgeScriptTag = `<script src="${base}/embed/stackblitz-bridge"></script>`;
 
+    // Type describing that Git tree blobs *may* have a size field
+    type TreeBlobLike = { size?: number };
+
     for (const item of treeData.tree) {
       if (item.type !== "blob" || !item.path || !item.sha) continue;
 
@@ -250,8 +253,9 @@ export async function GET(request: NextRequest) {
       if (ALWAYS_SKIP_EXT.has(ext)) continue;
 
       // 3) Size checks BEFORE we fetch blob content
-      //    The Git tree often includes a "size" for blobs; if absent, treat as unknown.
-      const approxSize = typeof (item as any).size === "number" ? (item as any).size : undefined;
+      const sizeMaybe = (item as TreeBlobLike).size;
+      const approxSize: number | undefined =
+        typeof sizeMaybe === "number" ? sizeMaybe : undefined;
 
       // Per-file ceiling (if size known)
       if (approxSize !== undefined && approxSize > MAX_FILE_BYTES) continue;
